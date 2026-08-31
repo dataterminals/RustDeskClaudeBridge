@@ -3,7 +3,12 @@
 Speaks JSON-RPC 2.0 over newline-delimited stdin/stdout, using only the standard
 library. Register it with::
 
-    claude mcp add rustdesk -- python -m rdbridge.mcp_server
+    claude mcp add rustdesk --scope user -e "PYTHONPATH=<repo>/src" -- python -m rdbridge.mcp_server
+
+The package is not installed, so ``src/`` has to reach the subprocess on
+PYTHONPATH or this module cannot be imported at all. In Windows PowerShell,
+quote the separator as ``'--'`` -- ``claude`` is a .ps1 shim and the parameter
+binder eats a bare one. See the README for the full explanation.
 
 Nothing in this module may print to stdout except protocol messages -- stdout is
 the transport. Diagnostics go to stderr.
