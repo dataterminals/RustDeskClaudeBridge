@@ -101,9 +101,26 @@ Other commands: `peers`, `sessions`, `info`, `log`, `options`, `policy`,
 
 ## As an MCP server
 
+The package is not installed into site-packages, so `python -m rdbridge...`
+alone fails with `No module named 'rdbridge'` — `src/` has to be on the path.
+Pass it as an environment variable when registering:
+
 ```bash
-claude mcp add rustdesk -- python -m rdbridge.mcp_server
+claude mcp add rustdesk --scope user -e "PYTHONPATH=/full/path/to/RustDeskClaudeBridge/src" -- python -m rdbridge.mcp_server
 ```
+
+Nothing else needs setting: the bridge locates its own config from the module's
+location, so it works from any working directory.
+
+**In PowerShell**, use the stop-parsing token so `--` and `-m` reach the command
+intact rather than being eaten by the parser:
+
+```powershell
+claude --% mcp add rustdesk --scope user -e "PYTHONPATH=D:/path/to/RustDeskClaudeBridge/src" -- python -m rdbridge.mcp_server
+```
+
+Verify with `claude mcp get rustdesk`; remove with
+`claude mcp remove rustdesk -s user`.
 
 Tool descriptions state which layer each tool belongs to, so the read-only ones
 are distinguishable from the ones that contact another machine or send real
