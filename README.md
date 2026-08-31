@@ -140,7 +140,7 @@ input.
 python -m unittest discover -s tests
 ```
 
-All offline — no RustDesk, no peer, no network. 81 tests covering the policy
+All offline — no RustDesk, no peer, no network. 94 tests covering the policy
 boundary, the TOML editor's password-preservation guard, log parsing, coordinate
 mapping and the shim's exit codes.
 
