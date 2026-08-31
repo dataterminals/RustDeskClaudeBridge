@@ -1,0 +1,86 @@
+{
+  "$comment": [
+    "Bridge configuration. This file is tracked; machine-specific values belong",
+    "in config/bridge.local.json (gitignored), which is shallow-merged over this.",
+    "",
+    "'peer' is deliberately null here. A RustDesk ID is the address of a specific",
+    "machine -- publishing one invites connection attempts against it -- so real",
+    "IDs live only in bridge.local.json. Set it there, or pass --peer.",
+    "",
+    "No credential appears in this repo. RustDesk stores the peer password in its",
+    "own encrypted config; the bridge only ever names a peer."
+  ],
+
+  "peer": null,
+  "rustdesk_exe": null,
+  "timeout_seconds": 60,
+
+  "sessions": {
+    "enabled": true,
+    "allow_kinds": [
+      "remote-desktop",
+      "file-transfer",
+      "terminal",
+      "view-camera",
+      "port-forward"
+    ],
+    "$deny_note": [
+      "rdp and terminal-admin are off by default: the first hands the session to",
+      "mstsc outside the bridge's view, the second opens an elevated shell on the",
+      "far machine."
+    ],
+    "deny_kinds": ["rdp", "terminal-admin"]
+  },
+
+  "options": {
+    "read": true,
+    "write": false,
+    "$write_note": [
+      "Writing global options runs RustDesk elevated and triggers UAC.",
+      "Turn this on deliberately, and keep allow_write narrow."
+    ],
+    "allow_write": [],
+    "deny_write": []
+  },
+
+  "peer_options": {
+    "write": false,
+    "allow_write": [
+      "custom-fps",
+      "codec-preference",
+      "image_quality",
+      "custom_image_quality",
+      "view_style",
+      "scroll_style",
+      "disable_audio",
+      "disable_clipboard",
+      "show_remote_cursor",
+      "follow_remote_cursor",
+      "view_only",
+      "keyboard_mode",
+      "collapse_toolbar"
+    ]
+  },
+
+  "forwards": {
+    "enabled": false,
+    "$note": [
+      "Each entry is [local_port, remote_host, remote_port] -- the schema RustDesk",
+      "persists in peers/<id>.toml. RustDesk binds the listener to 0.0.0.0, NOT to",
+      "127.0.0.1, so an open forward exposes the remote service to your whole local",
+      "network for as long as the session lasts. That is why this is opt-in and why",
+      "each forward has to be named rather than allowed by pattern."
+    ],
+    "allow": []
+  },
+
+  "input": {
+    "$note": [
+      "The pixel layer sends real mouse and keyboard events to the remote machine.",
+      "It is off by default and there is no way to undo a click."
+    ],
+    "enabled": false,
+    "require_focus": true,
+    "allow_keys": false
+  }
+}

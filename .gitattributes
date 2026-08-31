@@ -1,0 +1,10 @@
+# Normalize to LF in the repository; check out native on Windows.
+* text=auto
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+
+# Batch files must keep CRLF or cmd.exe can mis-parse them.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf

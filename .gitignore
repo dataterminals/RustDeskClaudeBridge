@@ -1,0 +1,18 @@
+# Machine-local overrides. This is where the real peer IDs live: a RustDesk ID
+# is the address of a specific machine, so it is deliberately kept out of the
+# tracked config.
+config/bridge.local.json
+
+# Calibration is per-machine and per-monitor-layout; regenerate it, never commit.
+config/calibration.json
+
+# Scratch space
+tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
