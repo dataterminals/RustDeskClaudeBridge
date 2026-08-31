@@ -106,18 +106,26 @@ alone fails with `No module named 'rdbridge'` — `src/` has to be on the path.
 Pass it as an environment variable when registering:
 
 ```bash
-claude mcp add rustdesk --scope user -e "PYTHONPATH=/full/path/to/RustDeskClaudeBridge/src" -- python -m rdbridge.mcp_server
+claude mcp add rustdesk --scope user -e "PYTHONPATH=D:/Github Repositories/RustDeskClaudeBridge/src" -- python -m rdbridge.mcp_server
 ```
 
-Nothing else needs setting: the bridge locates its own config from the module's
-location, so it works from any working directory.
+Substitute your own checkout path; it differs per machine. Nothing else needs
+setting — the bridge locates its own config from the module's location, so it
+works from any working directory.
 
-**In PowerShell**, use the stop-parsing token so `--` and `-m` reach the command
-intact rather than being eaten by the parser:
+**In Windows PowerShell**, `claude` resolves to `claude.ps1`, and the parameter
+binder consumes the bare `--` before the script ever sees it, so the subprocess
+command arrives stripped of its separator. Quote the separator to get it
+through:
 
 ```powershell
-claude --% mcp add rustdesk --scope user -e "PYTHONPATH=D:/path/to/RustDeskClaudeBridge/src" -- python -m rdbridge.mcp_server
+claude mcp add rustdesk --scope user -e "PYTHONPATH=D:/Github Repositories/RustDeskClaudeBridge/src" '--' python -m rdbridge.mcp_server
 ```
+
+The stop-parsing token `--%` does *not* help here: it applies only to native
+commands, so against a `.ps1` shim it is passed through as a literal argument
+and everything after it collapses into a single string. `claude.cmd --% ...`
+does work, since that one is native.
 
 Verify with `claude mcp get rustdesk`; remove with
 `claude mcp remove rustdesk -s user`.
