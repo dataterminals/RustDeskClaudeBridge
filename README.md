@@ -99,6 +99,12 @@ remote terminal, its display layout), and the active policy.
 Other commands: `peers`, `sessions`, `info`, `log`, `options`, `policy`,
 `option`, `setting`, `geometry`, `calibrate`, `click`, `scroll`, `type`, `press`.
 
+`type` and `press` take `--kind terminal` or `--kind remote-desktop` (the
+default). Prefer the terminal. There the keys land in a shell you opened. In a
+remote desktop they land in whatever has focus on the far machine. Both are
+off until `input.enabled` and `input.allow_keys` are set in
+`config/bridge.local.json`.
+
 ## As an MCP server
 
 The package is not installed into site-packages, so `python -m rdbridge...`
@@ -140,9 +146,9 @@ input.
 python -m unittest discover -s tests
 ```
 
-All offline — no RustDesk, no peer, no network. 94 tests covering the policy
+All offline — no RustDesk, no peer, no network. 119 tests covering the policy
 boundary, the TOML editor's password-preservation guard, log parsing, coordinate
-mapping and the shim's exit codes.
+mapping, session-window titles, where keystrokes go, and the shim's exit codes.
 
 ## Port forwards expose to the LAN, not to localhost
 

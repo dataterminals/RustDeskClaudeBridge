@@ -158,8 +158,12 @@ version: "1.4.5", features: Features { privacy_mode: true, terminal: true }
 ```
 
 There is **no headless interface** to it in the shipped binary — it is a Flutter
-tab. A small AGPL client against `hbb_common` speaking those messages would give
-a true headless shell over RustDesk. That is the endgame, and it is a real
+tab. The bridge sends keys to it with `rdb type --kind terminal` (or
+`rustdesk_type` with `kind: "terminal"`). That needs no display geometry, since
+keys go to the focused window, not to a coordinate.
+
+A small AGPL client against `hbb_common` speaking those messages would give a
+true headless shell over RustDesk. That is the endgame, and it is a real
 project, not an afternoon.
 
 ## Windows
@@ -173,6 +177,45 @@ project, not an afternoon.
 Session titles are `<alias>@<hostname> - <Session Type> - RustDesk`, e.g.
 `Sylvia's Desktop@syldesk - Remote Desktop - RustDesk`. That title is the only
 place a session's peer and kind are exposed externally.
+
+The label part comes from `getDesktopTabLabel` in `flutter/lib/common.dart`: the
+alias, or the peer ID when there is none, plus `@<hostname>` unless the label
+already contains the hostname. So a title need not contain an `@` at all.
+
+**A terminal window has no session-type segment.** It is titled
+`Sylvia's Desktop@syldesk - RustDesk`. This was found live on 2026-10-06, with
+1.4.5 on both ends, when the bridge failed to recognise its own terminal window.
+The source explains it. `getWindowName()` in `common.dart` switches on the window
+type, with cases for Main, FileTransfer, ViewCamera, PortForward and
+RemoteDesktop. `WindowType.Terminal` has no case, so it falls through to the
+default and gets the bare app name. The shipped `data\app.so` agrees: it holds
+`Remote Desktop - `, `File Transfer - `, `Port Forward - ` and `View Camera - `
+once each, and no `Terminal - `. `master` had the same switch on 2026-10-06. It
+would take only a one-line case to change this, so the parser still maps a
+`Terminal` segment if one ever appears.
+
+Inside the window, each terminal tab is labelled `<alias> #<n>`, or
+`<peer ID> #<n>` without an alias.
+
+More about terminal windows, from the 1.4.5 source:
+
+- **`--terminal-admin` opens the same window type.** It goes through
+  `connect(isTerminal: true)` like `--terminal`, so an elevated terminal's title
+  is identical to a plain one. The bridge treats the two kinds as one window
+  kind, which means `kind="terminal"` also matches an elevated terminal someone
+  opened by hand.
+- **A second terminal to the same peer may become a tab, not a window.**
+  `newTerminal` first asks the existing terminal windows whether one already
+  has an active session with that peer, and adds a tab there if so. No new
+  window appears, so `open_session` reports `opened: false` while the tab is
+  open. Not yet tested live.
+- **Switching or closing a tab may retitle the window.** The terminal page's
+  `onSelected` calls `getWindowNameWithId` with the *tab key*, which is
+  `<peer ID>_<n>` rather than the peer ID. By the source, that leaves the window
+  titled `<peer ID>_<n> - RustDesk`, with no alias and no hostname. Not yet seen
+  live. If it happens, the parser still calls the window a terminal, but a
+  lookup by alias or hostname will not find it. That fails closed with
+  `WindowNotFound`.
 
 **A minimized window reports `GetWindowRect` as `-32000,-32000` with a 160×28
 size** — not an error. Any geometry derived from it is nonsense.

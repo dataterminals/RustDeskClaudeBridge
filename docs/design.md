@@ -146,6 +146,25 @@ been reading simply "the latest" — went blind while a remote desktop was still
 live and perfectly mappable. Fixed with `require_displays`, and pinned by a
 regression test.
 
+**A terminal window's title has no session type.** Found on 2026-10-06, driving
+a terminal from one machine to another: RustDesk 1.4.5 titles it
+`<alias>@<hostname> - RustDesk`. The parser expected three segments, so it
+reported the window with no kind. `open_session` said `opened: false` while the
+window was on screen, and close and input could not find it by kind. RustDesk's
+`getWindowName()` has no Terminal case (details in `rustdesk-notes.md`). A title
+with no type segment now parses as a terminal, but only when the `@` shows where
+the label ends. An unrecognised window is never promoted to a target for typed
+input.
+
+**Keys do not need a pixel mapping.** The same session showed that typing could
+not target the terminal at all. `rdb type` and `rustdesk_type` never passed a
+kind, so keys always went to the remote desktop, which means whatever had focus
+on the far machine. Key input also went through the pixel mapping, which
+requires remote display geometry, and a terminal has none. Keys now resolve and
+focus the session window directly, with no mapping. `kind` is exposed on both
+surfaces, and `terminal` is the documented target. The policy gate and the
+focus check are unchanged.
+
 ## Open questions
 
 1. **A headless protocol client.** The terminal protobufs are all present and

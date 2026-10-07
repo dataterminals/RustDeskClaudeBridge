@@ -3,10 +3,11 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir, "src"))
 
-from rdbridge import windows  # noqa: E402
+from rdbridge import policy, sessions, windows  # noqa: E402
 from rdbridge.errors import WindowNotFound  # noqa: E402
 
 
@@ -50,6 +51,59 @@ class TitleParsing(unittest.TestCase):
         parsed = windows.parse_session_title("a@b - Telepathy - RustDesk")
         self.assertIsNone(parsed["kind"])
 
+    def test_the_bare_app_title_is_not_a_session(self):
+        self.assertIsNone(windows.parse_session_title("RustDesk")["kind"])
+
+
+class TerminalTitles(unittest.TestCase):
+    """Regression: a terminal session window went unrecognised.
+
+    Found live on 2026-10-06 with RustDesk 1.4.5 on both ends. A terminal
+    window is titled '<alias>@<hostname> - RustDesk', with no session-type
+    segment, because getWindowName() in common.dart has no Terminal case. The
+    parser wanted three segments, so it reported kind None, open_session said
+    'opened: false' while the window sat there, and close and input could not
+    find it by kind.
+    """
+
+    def test_the_real_terminal_title_shape(self):
+        parsed = windows.parse_session_title("Sylvia's Desktop@syldesk - RustDesk")
+        self.assertEqual(parsed["kind"], "terminal")
+        self.assertEqual(parsed["peer_label"], "Sylvia's Desktop")
+        self.assertEqual(parsed["hostname"], "syldesk")
+        self.assertIsNone(parsed["kind_text"])
+
+    def test_an_alias_containing_a_dash_is_still_a_terminal(self):
+        # The '@' marks where the label ends, so the ' - ' belongs to the alias.
+        parsed = windows.parse_session_title("Sylvia - Desk@syldesk - RustDesk")
+        self.assertEqual(parsed["kind"], "terminal")
+        self.assertEqual(parsed["peer_label"], "Sylvia - Desk")
+        self.assertEqual(parsed["hostname"], "syldesk")
+
+    def test_a_label_without_a_hostname(self):
+        # getDesktopTabLabel drops '@<hostname>' when the alias already
+        # contains it.
+        parsed = windows.parse_session_title("syldesk - RustDesk")
+        self.assertEqual(parsed["kind"], "terminal")
+        self.assertEqual(parsed["peer_label"], "syldesk")
+        self.assertIsNone(parsed["hostname"])
+
+    def test_an_unknown_segment_without_an_at_is_not_called_a_terminal(self):
+        # Ambiguous: alias 'Box - Thing', or an unknown kind 'Thing'. Guessing
+        # terminal would make the window a target for typed input.
+        parsed = windows.parse_session_title("Box - Thing - RustDesk")
+        self.assertIsNone(parsed["kind"])
+
+    def test_a_typed_title_still_wins(self):
+        parsed = windows.parse_session_title(
+            "Sylvia's Desktop@syldesk - Remote Desktop - RustDesk")
+        self.assertEqual(parsed["kind"], "remote-desktop")
+
+    def test_terminal_admin_shares_the_terminal_window_kind(self):
+        self.assertEqual(windows.window_kind("terminal-admin"), "terminal")
+        self.assertEqual(windows.window_kind("terminal"), "terminal")
+        self.assertEqual(windows.window_kind("remote-desktop"), "remote-desktop")
+
 
 class HiddenWindowsAreSkipped(unittest.TestCase):
     """Regression: a closed session was reported open forever.
@@ -86,6 +140,17 @@ class HiddenWindowsAreSkipped(unittest.TestCase):
         found = windows.find_session_window(kind="remote-desktop")
         self.assertEqual(found["hwnd"], 1)
 
+    def test_a_terminal_window_resolves_by_kind_and_peer(self):
+        windows.enumerate_windows = lambda class_name=None: [
+            _record("Sylvia's Desktop@syldesk - Remote Desktop - RustDesk", True, 1),
+            _record("Sylvia's Desktop@syldesk - RustDesk", True, 3),
+        ]
+        self.assertEqual(windows.find_session_window(kind="terminal")["hwnd"], 3)
+        self.assertEqual(
+            windows.find_session_window(peer="syldesk", kind="terminal")["hwnd"], 3)
+        self.assertEqual(
+            windows.find_session_window(kind="terminal-admin")["hwnd"], 3)
+
     def test_ambiguity_is_refused_rather_than_guessed(self):
         windows.enumerate_windows = lambda class_name=None: [
             _record("a@host - Remote Desktop - RustDesk", True, 1),
@@ -94,6 +159,40 @@ class HiddenWindowsAreSkipped(unittest.TestCase):
         with self.assertRaises(WindowNotFound) as caught:
             windows.find_session_window(kind="remote-desktop")
         self.assertIn("2 session windows match", str(caught.exception))
+
+
+class OpenSessionSeesTheTerminal(unittest.TestCase):
+    """open_session reported 'opened: false' for a terminal that had opened."""
+
+    TITLE = "Sylvia's Desktop@syldesk - RustDesk"
+
+    def setUp(self):
+        self._real = windows.enumerate_windows
+        self.open_windows = []
+        windows.enumerate_windows = lambda class_name=None: list(self.open_windows)
+
+    def tearDown(self):
+        windows.enumerate_windows = self._real
+
+    def _open(self, kind):
+        test = self
+
+        class FakeRustDesk:
+            def run(self, args, check=True):
+                test.open_windows.append(_record(test.TITLE, True, 7))
+                return ""
+
+        peer = SimpleNamespace(id="123456789", label="Sylvia's Desktop")
+        return sessions.open_session(FakeRustDesk(), policy.Policy({}), peer,
+                                     kind, wait_seconds=1.0)
+
+    def test_terminal_opens(self):
+        result = self._open("terminal")
+        self.assertTrue(result["opened"])
+        self.assertEqual(result["window"]["title"], self.TITLE)
+
+    def test_terminal_admin_opens_the_same_window_type(self):
+        self.assertTrue(self._open("terminal-admin")["opened"])
 
 
 if __name__ == "__main__":

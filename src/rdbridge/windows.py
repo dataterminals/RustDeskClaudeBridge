@@ -4,7 +4,8 @@ Verified against RustDesk 1.4.5 on Windows 11:
 
 * the main window is class ``FLUTTER_RUNNER_WIN32_WINDOW``, titled ``RustDesk``
 * every session opens its own top-level window of class ``RustdeskMultiWindow``,
-  titled ``<alias>@<hostname> - <Session Type> - RustDesk``
+  titled ``<alias>@<hostname> - <Session Type> - RustDesk`` -- except a
+  terminal, titled ``<alias>@<hostname> - RustDesk`` with no type segment at all
 
 The title is the only place the session's peer and kind are exposed to the
 outside, so it is what the bridge matches on.
@@ -32,6 +33,19 @@ _TITLE_KINDS = {
     "port forward": "port-forward",
     "rdp": "rdp",
 }
+
+_TITLE_SUFFIX = " - RustDesk"
+
+# A terminal window's title has no type segment. In 1.4.5, getWindowName() in
+# flutter/lib/common.dart has cases for Main, FileTransfer, ViewCamera,
+# PortForward and RemoteDesktop; WindowType.Terminal falls through to the
+# default and returns the bare app name. So '<label> - RustDesk' is a terminal.
+# The 'terminal' entry above stays in case a later release adds the case.
+_UNTYPED_KIND = "terminal"
+
+# Session kinds whose window reports a different kind. --terminal-admin opens
+# the same Terminal window type as --terminal, so the titles are identical.
+_WINDOW_KINDS = {"terminal-admin": "terminal"}
 
 _user32 = ctypes.windll.user32
 _ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -103,20 +117,48 @@ def enumerate_windows(class_name=None):
     return found
 
 
-def parse_session_title(title):
-    """Split ``<alias>@<host> - <Kind> - RustDesk`` into its parts.
+def window_kind(kind):
+    """The kind a session window's title reports for session kind ``kind``."""
+    return _WINDOW_KINDS.get(kind, kind)
 
-    Split from the right: an alias may itself contain ' - '.
+
+def parse_session_title(title):
+    """Split ``<alias>@<host>[ - <Kind>] - RustDesk`` into its parts.
+
+    The label is ``<alias>@<hostname>``, or just the alias (or peer ID) when it
+    already contains the hostname or the hostname is unknown -- that is
+    ``getDesktopTabLabel`` in common.dart. An alias may itself contain ' - ', so
+    the kind segment is found from the right, and a title with none is a
+    terminal (see ``_UNTYPED_KIND``).
+
+    A trailing segment that is not a known kind is only read as part of the
+    label when an '@' shows where the label ends. Without one it is reported as
+    an unknown kind, because calling an unrecognised window a terminal would make
+    it a target for typed input.
     """
-    parts = title.rsplit(" - ", 2)
-    if len(parts) != 3 or parts[2] != "RustDesk":
-        return {"peer_label": title, "hostname": None, "kind": None}
-    who, kind_text = parts[0], parts[1]
-    alias, _, hostname = who.rpartition("@")
+    if not title.endswith(_TITLE_SUFFIX):
+        return {"peer_label": title, "hostname": None, "kind": None,
+                "kind_text": None}
+    rest = title[:-len(_TITLE_SUFFIX)]
+    head, separator, tail = rest.rpartition(" - ")
+
+    if separator and tail.strip().lower() in _TITLE_KINDS:
+        who, kind_text = head, tail
+        kind = _TITLE_KINDS[tail.strip().lower()]
+    elif separator and "@" in rest and " - " not in rest.rpartition("@")[2]:
+        # The ' - ' is inside the alias; nothing follows the hostname.
+        who, kind_text, kind = rest, None, _UNTYPED_KIND
+    elif separator:
+        who, kind_text, kind = head, tail, None
+    else:
+        who, kind_text, kind = rest, None, _UNTYPED_KIND
+
+    alias, at, hostname = who.rpartition("@")
     return {
         "peer_label": alias or who,
-        "hostname": hostname or None,
-        "kind": _TITLE_KINDS.get(kind_text.strip().lower()),
+        # No '@' means no hostname -- not the whole label in its place.
+        "hostname": (hostname or None) if at else None,
+        "kind": kind,
         "kind_text": kind_text,
     }
 
@@ -154,7 +196,9 @@ def find_session_window(peer=None, kind=None):
             or wanted in window["title"].lower()
         ]
     if kind:
-        candidates = [window for window in candidates if window.get("kind") == kind]
+        wanted_kind = window_kind(kind)
+        candidates = [window for window in candidates
+                      if window.get("kind") == wanted_kind]
 
     if not candidates:
         raise WindowNotFound(

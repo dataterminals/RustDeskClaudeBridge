@@ -16,7 +16,7 @@ import json
 import sys
 
 from .errors import BridgeError
-from .ops import Bridge
+from .ops import KEY_TARGET_KINDS, Bridge
 
 
 def _print(value):
@@ -139,11 +139,19 @@ def build_parser():
     scroll_parser.add_argument("clicks", type=int)
     scroll_parser.add_argument("--display", type=int)
 
-    type_parser = sub.add_parser("type", help="Type text into the remote session")
+    key_kind_help = ("Session window to send keys to. Prefer 'terminal': keys land "
+                     "in the remote shell. With 'remote-desktop' they go to "
+                     "whatever has focus on the far desktop.")
+
+    type_parser = sub.add_parser("type", help="Type text into a remote session")
     type_parser.add_argument("text")
+    type_parser.add_argument("--kind", default="remote-desktop",
+                             choices=KEY_TARGET_KINDS, help=key_kind_help)
 
     press_parser = sub.add_parser("press", help="Press one named key remotely")
     press_parser.add_argument("key")
+    press_parser.add_argument("--kind", default="remote-desktop",
+                              choices=KEY_TARGET_KINDS, help=key_kind_help)
 
     return parser
 
@@ -204,9 +212,9 @@ def run(args):
         return bridge.remote_scroll(args.point[0], args.point[1], args.clicks,
                                     display=args.display)
     if command == "type":
-        return bridge.remote_type(args.text)
+        return bridge.remote_type(args.text, kind=args.kind)
     if command == "press":
-        return bridge.remote_press(args.key)
+        return bridge.remote_press(args.key, kind=args.kind)
 
     raise BridgeError("Unhandled command: %s" % command)
 

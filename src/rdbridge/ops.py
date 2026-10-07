@@ -7,7 +7,8 @@ Layered deliberately, cheapest and safest first:
 * **sessions** -- open and close sessions by naming a peer. No credential.
 * **settings** -- read from TOML, write through elevated ``--option``.
 * **forwards** -- seed a tunnel into the peer config and open it.
-* **input**    -- move the real cursor over the session window and click.
+* **input**    -- move the real cursor over the session window and click, or
+                  type into a focused session window.
 
 Each layer is more likely to surprise you than the one above it, and each is
 gated separately in ``config/bridge.json``.
@@ -24,9 +25,15 @@ from . import pointer
 from . import sessions as sessions_module
 from . import state
 from . import windows
-from .errors import BridgeError, PeerError
+from .errors import BridgeError, PeerError, PolicyError
 from .policy import Policy
 from .rustdesk import RustDesk
+
+# Session windows that keystrokes may be sent to, preferred target first. In a
+# terminal the keys land in a shell the bridge opened; in a remote desktop they
+# land in whatever has focus on the far machine. The other windows are local
+# RustDesk UI, where typing reaches nothing remote.
+KEY_TARGET_KINDS = ("terminal", "remote-desktop")
 
 
 class Bridge:
@@ -168,10 +175,14 @@ class Bridge:
     def _calibration_path(self):
         return geometry.calibration_path(self.config["_repo_root"])
 
-    def _mapping(self, peer=None, kind="remote-desktop", display=None):
+    def _session_window(self, peer, kind):
         resolved = self.peer(peer)
         window = windows.find_session_window(peer=resolved.hostname or resolved.alias,
                                              kind=kind)
+        return resolved, window
+
+    def _mapping(self, peer=None, kind="remote-desktop", display=None):
+        resolved, window = self._session_window(peer, kind)
         geometry.assert_usable(window)
         display_record = geometry.display_by_index(
             self.peer_info(require_displays=True), display
@@ -224,12 +235,7 @@ class Bridge:
             "stored_at": self._calibration_path(),
         }
 
-    def _prepare_input(self, peer, kind, display, x, y, keys=False):
-        settings = self.policy.check_input(keys=keys)
-        resolved, window, display_record, mapping, _ = self._mapping(peer, kind, display)
-        target = None
-        if x is not None and y is not None:
-            target = geometry.remote_to_screen(window, mapping, x, y)
+    def _require_focus(self, settings, window):
         if settings.get("require_focus", True):
             windows.restore_and_focus(window["hwnd"])
             foreground = windows.foreground_window()
@@ -240,7 +246,31 @@ class Bridge:
                     "because it would have gone to whatever is focused instead."
                     % window["title"]
                 )
+
+    def _prepare_input(self, peer, kind, display, x, y):
+        settings = self.policy.check_input()
+        resolved, window, display_record, mapping, _ = self._mapping(peer, kind, display)
+        target = geometry.remote_to_screen(window, mapping, x, y)
+        self._require_focus(settings, window)
         return resolved, window, mapping, target
+
+    def _prepare_keys(self, peer, kind):
+        """Find and focus the window for keystrokes. No pixel mapping is involved.
+
+        Keys go wherever focus is, not to a coordinate, so remote display
+        geometry is not required. Requiring it blocked typing into a terminal,
+        which negotiates no video and so has no display geometry of its own.
+        """
+        settings = self.policy.check_input(keys=True)
+        if kind not in KEY_TARGET_KINDS:
+            raise PolicyError(
+                "Keystrokes can only go to a %s session window, not '%s'. Other "
+                "session windows are local RustDesk UI."
+                % (" or ".join(KEY_TARGET_KINDS), kind)
+            )
+        resolved, window = self._session_window(peer, kind)
+        self._require_focus(settings, window)
+        return resolved, window
 
     def remote_click(self, x, y, button="left", double=False, peer=None,
                      kind="remote-desktop", display=None):
@@ -263,12 +293,16 @@ class Bridge:
         return result
 
     def remote_type(self, text, peer=None, kind="remote-desktop"):
-        self._prepare_input(peer, kind, None, None, None, keys=True)
-        return pointer.type_text(text)
+        _, window = self._prepare_keys(peer, kind)
+        result = pointer.type_text(text)
+        result.update({"kind": kind, "window": window["title"]})
+        return result
 
     def remote_press(self, key, peer=None, kind="remote-desktop"):
-        self._prepare_input(peer, kind, None, None, None, keys=True)
-        return pointer.press(key)
+        _, window = self._prepare_keys(peer, kind)
+        result = pointer.press(key)
+        result.update({"kind": kind, "window": window["title"]})
+        return result
 
     # -- diagnostics ------------------------------------------------------
     def doctor(self):

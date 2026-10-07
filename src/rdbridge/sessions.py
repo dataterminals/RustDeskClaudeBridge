@@ -32,13 +32,14 @@ def open_session(rd, policy, peer, kind="remote-desktop", wait_seconds=20.0):
     before = {w["hwnd"] for w in windows.session_windows()}
     rd.run([verb, peer.id], check=False)
 
+    expected = windows.window_kind(kind)
     deadline = time.monotonic() + float(wait_seconds)
     appeared = None
     while time.monotonic() < deadline:
         for window in windows.session_windows():
             if window["hwnd"] in before:
                 continue
-            if window.get("kind") == kind or kind == "rdp":
+            if window.get("kind") == expected or kind == "rdp":
                 appeared = window
                 break
         if appeared:
