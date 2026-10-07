@@ -14,7 +14,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir, "src"))
 
 from rdbridge import cli, mcp_server, ops, pointer, windows  # noqa: E402
-from rdbridge.errors import BridgeError, PolicyError  # noqa: E402
+from rdbridge.errors import BridgeError, PolicyError, WindowNotFound  # noqa: E402
 
 TERMINAL = "Sylvia's Desktop@syldesk - RustDesk"
 DESKTOP = "Sylvia's Desktop@syldesk - Remote Desktop - RustDesk"
@@ -92,9 +92,21 @@ class KeyInput(unittest.TestCase):
         self.assertEqual(self.focused, [10])
         self.assertEqual(result["window"], TERMINAL)
 
-    def test_the_default_target_is_still_the_remote_desktop(self):
+    def test_the_default_target_is_the_terminal(self):
         self._bridge().remote_type("x")
+        self._bridge().remote_press("enter")
+        self.assertEqual(self.focused, [10, 10])
+
+    def test_the_remote_desktop_has_to_be_asked_for(self):
+        self._bridge().remote_type("x", kind="remote-desktop")
         self.assertEqual(self.focused, [20])
+
+    def test_no_terminal_does_not_fall_back_to_the_desktop(self):
+        with mock.patch.object(windows, "enumerate_windows",
+                               lambda class_name=None: [_record(DESKTOP, 20)]):
+            with self.assertRaises(WindowNotFound):
+                self._bridge().remote_type("x")
+        self.assertEqual((self.sent, self.focused), ([], []))
 
     def test_a_non_input_window_is_refused(self):
         for kind in ("file-transfer", "port-forward", "view-camera"):
@@ -140,14 +152,17 @@ class KeyInput(unittest.TestCase):
 
 
 class _Recorder:
+    """Stands in for Bridge. Its kind default is a sentinel, so a surface that
+    stops passing kind shows up as 'unset' instead of hiding behind a default."""
+
     def __init__(self):
         self.calls = []
 
-    def remote_type(self, text, peer=None, kind="remote-desktop"):
+    def remote_type(self, text, peer=None, kind="unset"):
         self.calls.append(("type", text, peer, kind))
         return {}
 
-    def remote_press(self, key, peer=None, kind="remote-desktop"):
+    def remote_press(self, key, peer=None, kind="unset"):
         self.calls.append(("press", key, peer, kind))
         return {}
 
@@ -169,8 +184,12 @@ class SurfacesPassTheKind(unittest.TestCase):
         self.assertEqual(self._cli("press", "enter", "--kind", "terminal"),
                          [("press", "enter", None, "terminal")])
 
-    def test_cli_default_is_unchanged(self):
+    def test_cli_defaults_to_the_terminal(self):
         self.assertEqual(self._cli("type", "dir"),
+                         [("type", "dir", None, "terminal")])
+        self.assertEqual(self._cli("press", "enter"),
+                         [("press", "enter", None, "terminal")])
+        self.assertEqual(self._cli("type", "--kind", "remote-desktop", "dir"),
                          [("type", "dir", None, "remote-desktop")])
 
     def test_cli_refuses_a_kind_that_takes_no_keys(self):
@@ -185,7 +204,12 @@ class SurfacesPassTheKind(unittest.TestCase):
         tools["rustdesk_press"]["handler"](recorder, {"key": "enter",
                                                       "kind": "terminal"})
         tools["rustdesk_type"]["handler"](recorder, {"text": "dir"})
+        tools["rustdesk_press"]["handler"](recorder, {"key": "enter"})
+        tools["rustdesk_type"]["handler"](recorder, {"text": "dir",
+                                                     "kind": "remote-desktop"})
         self.assertEqual(recorder.calls, [
+            ("type", "dir", None, "terminal"),
+            ("press", "enter", None, "terminal"),
             ("type", "dir", None, "terminal"),
             ("press", "enter", None, "terminal"),
             ("type", "dir", None, "remote-desktop"),
@@ -196,7 +220,7 @@ class SurfacesPassTheKind(unittest.TestCase):
             tool = mcp_server.TOOLS_BY_NAME[name]
             kind = tool["inputSchema"]["properties"]["kind"]
             self.assertEqual(kind["enum"], list(ops.KEY_TARGET_KINDS), name)
-            self.assertIn("kind='terminal'", tool["description"], name)
+            self.assertIn("terminal by default", tool["description"], name)
 
 
 if __name__ == "__main__":

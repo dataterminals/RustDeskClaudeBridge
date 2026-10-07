@@ -99,11 +99,11 @@ remote terminal, its display layout), and the active policy.
 Other commands: `peers`, `sessions`, `info`, `log`, `options`, `policy`,
 `option`, `setting`, `geometry`, `calibrate`, `click`, `scroll`, `type`, `press`.
 
-`type` and `press` take `--kind terminal` or `--kind remote-desktop` (the
-default). Prefer the terminal. There the keys land in a shell you opened. In a
-remote desktop they land in whatever has focus on the far machine. Both are
-off until `input.enabled` and `input.allow_keys` are set in
-`config/bridge.local.json`.
+`type` and `press` send keys to the remote terminal by default, where they land
+in a shell you opened. `--kind remote-desktop` sends them to the remote desktop
+instead, where they land in whatever has focus on the far machine. With no
+terminal open, the default fails rather than falling back. Both are off until
+`input.enabled` and `input.allow_keys` are set in `config/bridge.local.json`.
 
 ## As an MCP server
 

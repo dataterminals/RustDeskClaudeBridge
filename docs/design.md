@@ -162,8 +162,9 @@ kind, so keys always went to the remote desktop, which means whatever had focus
 on the far machine. Key input also went through the pixel mapping, which
 requires remote display geometry, and a terminal has none. Keys now resolve and
 focus the session window directly, with no mapping. `kind` is exposed on both
-surfaces, and `terminal` is the documented target. The policy gate and the
-focus check are unchanged.
+surfaces and defaults to `terminal`. With no terminal open, typing fails with
+`WindowNotFound` rather than falling back to the remote desktop, which has to be
+asked for by name. The policy gate and the focus check are unchanged.
 
 ## Open questions
 

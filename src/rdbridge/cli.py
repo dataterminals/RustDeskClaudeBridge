@@ -16,7 +16,7 @@ import json
 import sys
 
 from .errors import BridgeError
-from .ops import KEY_TARGET_KINDS, Bridge
+from .ops import DEFAULT_KEY_KIND, KEY_TARGET_KINDS, Bridge
 
 
 def _print(value):
@@ -139,18 +139,18 @@ def build_parser():
     scroll_parser.add_argument("clicks", type=int)
     scroll_parser.add_argument("--display", type=int)
 
-    key_kind_help = ("Session window to send keys to. Prefer 'terminal': keys land "
-                     "in the remote shell. With 'remote-desktop' they go to "
-                     "whatever has focus on the far desktop.")
+    key_kind_help = ("Session window to send keys to (default: terminal, where "
+                     "they land in the remote shell). 'remote-desktop' sends them "
+                     "to whatever has focus on the far desktop.")
 
     type_parser = sub.add_parser("type", help="Type text into a remote session")
     type_parser.add_argument("text")
-    type_parser.add_argument("--kind", default="remote-desktop",
+    type_parser.add_argument("--kind", default=DEFAULT_KEY_KIND,
                              choices=KEY_TARGET_KINDS, help=key_kind_help)
 
     press_parser = sub.add_parser("press", help="Press one named key remotely")
     press_parser.add_argument("key")
-    press_parser.add_argument("--kind", default="remote-desktop",
+    press_parser.add_argument("--kind", default=DEFAULT_KEY_KIND,
                               choices=KEY_TARGET_KINDS, help=key_kind_help)
 
     return parser

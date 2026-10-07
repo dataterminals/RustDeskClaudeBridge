@@ -35,6 +35,10 @@ from .rustdesk import RustDesk
 # RustDesk UI, where typing reaches nothing remote.
 KEY_TARGET_KINDS = ("terminal", "remote-desktop")
 
+# The remote desktop has to be asked for. With no terminal open, the default
+# fails with WindowNotFound rather than falling back to the riskier target.
+DEFAULT_KEY_KIND = "terminal"
+
 
 class Bridge:
     def __init__(self, config):
@@ -292,13 +296,13 @@ class Bridge:
                        "mapping": mapping.source})
         return result
 
-    def remote_type(self, text, peer=None, kind="remote-desktop"):
+    def remote_type(self, text, peer=None, kind=DEFAULT_KEY_KIND):
         _, window = self._prepare_keys(peer, kind)
         result = pointer.type_text(text)
         result.update({"kind": kind, "window": window["title"]})
         return result
 
-    def remote_press(self, key, peer=None, kind="remote-desktop"):
+    def remote_press(self, key, peer=None, kind=DEFAULT_KEY_KIND):
         _, window = self._prepare_keys(peer, kind)
         result = pointer.press(key)
         result.update({"kind": kind, "window": window["title"]})

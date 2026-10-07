@@ -158,9 +158,9 @@ version: "1.4.5", features: Features { privacy_mode: true, terminal: true }
 ```
 
 There is **no headless interface** to it in the shipped binary — it is a Flutter
-tab. The bridge sends keys to it with `rdb type --kind terminal` (or
-`rustdesk_type` with `kind: "terminal"`). That needs no display geometry, since
-keys go to the focused window, not to a coordinate.
+tab. It is the default target for the bridge's `rdb type` and `rustdesk_type`.
+Sending keys to it needs no display geometry, since keys go to the focused
+window, not to a coordinate.
 
 A small AGPL client against `hbb_common` speaking those messages would give a
 true headless shell over RustDesk. That is the endgame, and it is a real

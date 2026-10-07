@@ -26,7 +26,7 @@ import traceback
 
 from . import __version__
 from .errors import BridgeError
-from .ops import KEY_TARGET_KINDS, Bridge
+from .ops import DEFAULT_KEY_KIND, KEY_TARGET_KINDS, Bridge
 
 DEFAULT_PROTOCOL = "2025-06-18"
 
@@ -50,11 +50,12 @@ _KIND = {"type": "string",
          "description": "Session kind."}
 _KEY_KIND = {"type": "string",
              "enum": list(KEY_TARGET_KINDS),
-             "description": "Session window that receives the keys. Prefer "
-                            "'terminal': open one with rustdesk_open_session and "
-                            "the keys land in that remote shell. The default, "
-                            "'remote-desktop', sends them to whatever has focus "
-                            "on the far desktop."}
+             "description": "Session window that receives the keys. Defaults "
+                            "to 'terminal': open one with rustdesk_open_session "
+                            "and the keys land in that remote shell. "
+                            "'remote-desktop' sends them to whatever has focus "
+                            "on the far desktop; ask for it only when the task "
+                            "is GUI-only."}
 
 TOOLS = [
     # -- read-only ---------------------------------------------------------
@@ -343,11 +344,11 @@ TOOLS = [
     {
         "name": "rustdesk_type",
         "description": "SENDS REAL KEYSTROKES TO ANOTHER MACHINE, NO UNDO. Types "
-                       "text into a session window. Prefer kind='terminal': the "
-                       "keys land in a remote shell you opened, rather than in "
-                       "whatever has focus on the far desktop (the default, "
-                       "kind='remote-desktop'). Needs no display geometry. Never "
-                       "use for passwords or any other credential.",
+                       "text into a session window -- the remote terminal by "
+                       "default, where the keys land in a shell you opened. "
+                       "kind='remote-desktop' sends them to whatever has focus "
+                       "on the far desktop instead. Needs no display geometry. "
+                       "Never use for passwords or any other credential.",
         "inputSchema": {
             "type": "object",
             "properties": {"text": {"type": "string"}, "peer": _PEER,
@@ -355,13 +356,13 @@ TOOLS = [
             "required": ["text"],
         },
         "handler": lambda b, a: b.remote_type(a["text"], peer=a.get("peer"),
-                                              kind=a.get("kind", "remote-desktop")),
+                                              kind=a.get("kind", DEFAULT_KEY_KIND)),
     },
     {
         "name": "rustdesk_press",
         "description": "SENDS A REAL KEYSTROKE TO ANOTHER MACHINE. One named key: "
-                       "enter, tab, escape, arrows, function keys. Prefer "
-                       "kind='terminal', as for rustdesk_type.",
+                       "enter, tab, escape, arrows, function keys. Goes to the "
+                       "remote terminal by default, as for rustdesk_type.",
         "inputSchema": {
             "type": "object",
             "properties": {"key": {"type": "string"}, "peer": _PEER,
@@ -369,7 +370,7 @@ TOOLS = [
             "required": ["key"],
         },
         "handler": lambda b, a: b.remote_press(a["key"], peer=a.get("peer"),
-                                               kind=a.get("kind", "remote-desktop")),
+                                               kind=a.get("kind", DEFAULT_KEY_KIND)),
     },
 ]
 
