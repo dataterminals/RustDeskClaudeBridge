@@ -278,41 +278,66 @@ paces Unicode input either: `KeyboardManager` turns down `VK_PACKET` key-downs
 the text path. So characters go one per call, paced. This comes from reading
 the source, not from a live test.
 
-**`PostMessage(WM_CHAR)` to the window: read from source, not yet tested
-live.** A posted message reaches only the window it was posted to, which is why
-it is attractive. If it worked without focus, it would be focus-free. If it
-needed focus, a focus change would drop characters instead of sending them to
-another app. The source says:
+**`PostMessage(WM_CHAR)` to the window.** A posted message reaches only the
+window it was posted to, which is why it is attractive. If it worked without
+focus, it would be focus-free. If it needed focus, a focus change would drop
+characters instead of sending them to another app. The source says:
 
 - A `WM_CHAR` posted to the `FLUTTERVIEW` child with no key-down before it is
   dispatched by `KeyboardManager` as text. It goes to `OnText` and on to
   `TextInputPlugin::TextHook`, which returns at once when
   `active_model_ == nullptr`, meaning no text field is connected.
-- No text field is connected while the window is unfocused. On desktop,
-  Flutter 3.24.5's `FocusManager` follows the app lifecycle
-  (`_respondToWindowFocus`) and moves focus to the root scope whenever the app
-  is not `resumed`. xterm's `CustomTextEdit` closes its input connection when
-  it loses focus. Posted key-downs fare no better, because the terminal's key
+- On desktop, Flutter 3.24.5's `FocusManager` follows the app lifecycle
+  (`_respondToWindowFocus`). When the app leaves `resumed`, it moves focus to
+  the root scope. xterm's `CustomTextEdit` closes its input connection when it
+  loses focus. Posted key-downs fare no better, because the terminal's key
   handler hangs off the same focus node.
 
-So the prediction, assuming the session window's engine reports lifecycle the
-way a single-window app does:
+**Tested live on 2026-10-15**, sylg5 on the far end, with a fresh terminal
+opened by `rdb open terminal` at an empty PowerShell prompt. Sylvia authorized
+`#rdb` (a comment) with no Enter. Each run posted `#`, `r`, `d`, `b` as
+`WM_CHAR` (lParam 1, 30 ms apart) to the terminal's `FLUTTERVIEW`, and the
+window was captured with `PrintWindow` before and after:
 
-- **Posted to an unfocused terminal:** dropped silently. This is not a
-  focus-free path.
-- **Posted to a focused terminal:** typed. If focus moved partway, the rest
-  would be dropped and could not land anywhere else.
+| Window state when posted | What landed on the remote line |
+|---|---|
+| Never focused: opened in the background, the Claude app in front throughout | `#rdb` — typed |
+| Focused: `SetForegroundWindow` took, foreground verified | `#rdb#rdb` — typed |
 
-The second case would make the 2026-10-15 failure structurally impossible, not
-just checked for. But a dropped character looks like nothing at all from this
-side, so the bridge stays on checked `SendInput` until a live test settles it.
-The test needs an open terminal session, and Sylvia told before it runs:
+Both were echoed back in PSReadLine's comment colour, so the characters made
+the full round trip through the remote shell. The first result contradicts the
+source prediction above, and the cursor explains why. xterm draws a filled
+block while its view has focus and a hollow one when it does not.
 
-1. Post `WM_CHAR` for `#rdb` (a comment, no Enter) to the terminal's
-   `FLUTTERVIEW` while another window has focus. Look at the remote line.
-2. The same with the terminal focused.
-3. If (2) types, check whether posted characters garble when sent in a burst,
-   and whether Enter works as `WM_CHAR 0x0D` or needs `WM_KEYDOWN VK_RETURN`.
+- Right after opening, never focused at OS level: **filled**. The view takes
+  focus inside Flutter (`autofocus: true`) when it is built. The engine never
+  saw the window deactivate, so the lifecycle never left `resumed`, and the
+  input connection stayed open.
+- After the window had been focused and then lost the foreground to another
+  app: **hollow**. That is the lifecycle suspension the source describes.
+
+So posted `WM_CHAR`s type into a terminal whose view still holds Flutter focus.
+That is the case for one that has never been in front, and for one that is in
+front now. By the source, and judging from the hollow cursor, they would be
+**dropped** for a terminal that was in front and then lost the foreground.
+That third case has not been posted to yet. It decides whether this is a
+focus-free path or only a misroute-proof one, so it is the next test.
+
+Either way, posting looks strictly safer than `SendInput` for the terminal:
+whatever happens, the characters cannot reach another app. Still open:
+whether posted characters garble when sent in a burst (the `CustomTextEdit`
+reset round trip applies to them too), and whether Enter works as
+`WM_CHAR 0x0D` or needs `WM_KEYDOWN VK_RETURN`. The bridge stays on checked
+`SendInput` until those are settled.
+
+**The foreground lock, observed.** The probe ran from a process under the Claude
+desktop app. With the Claude app in front, `SetForegroundWindow(terminal)`
+took. Handing the foreground back to the Claude app straight afterwards did not
+take. A second try, made after Sylvia had clicked into Discord, returned
+`FALSE`. So the right to take the foreground seems to come from the Claude app
+being in front, and it went once the terminal took over. With another app in
+front, the bridge cannot take the foreground, and `require_focus` refuses
+rather than typing anywhere.
 
 A truly focus-free path is the headless client under *Remote terminal*.
 
