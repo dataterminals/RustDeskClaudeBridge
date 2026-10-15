@@ -303,11 +303,14 @@ window was captured with `PrintWindow` before and after:
 |---|---|
 | Never focused: opened in the background, the Claude app in front throughout | `#rdb` — typed |
 | Focused: `SetForegroundWindow` took, foreground verified | `#rdb#rdb` — typed |
+| Focused earlier, then lost the foreground; the Claude app in front | `#rdb#rdb` — **dropped** |
 
-Both were echoed back in PSReadLine's comment colour, so the characters made
-the full round trip through the remote shell. The first result contradicts the
-source prediction above, and the cursor explains why. xterm draws a filled
-block while its view has focus and a hollow one when it does not.
+The two that typed were echoed back in PSReadLine's comment colour, so the
+characters made the full round trip through the remote shell. In the third,
+all four `PostMessageW` calls returned success, and a capture a few seconds
+later still showed `#rdb#rdb`. The first result contradicts the source
+prediction above, and the cursor explains why. xterm draws a filled block while
+its view has focus and a hollow one when it does not.
 
 - Right after opening, never focused at OS level: **filled**. The view takes
   focus inside Flutter (`autofocus: true`) when it is built. The engine never
@@ -316,19 +319,28 @@ block while its view has focus and a hollow one when it does not.
 - After the window had been focused and then lost the foreground to another
   app: **hollow**. That is the lifecycle suspension the source describes.
 
-So posted `WM_CHAR`s type into a terminal whose view still holds Flutter focus.
-That is the case for one that has never been in front, and for one that is in
-front now. By the source, and judging from the hollow cursor, they would be
-**dropped** for a terminal that was in front and then lost the foreground.
-That third case has not been posted to yet. It decides whether this is a
-focus-free path or only a misroute-proof one, so it is the next test.
+So posted `WM_CHAR`s type into a terminal whose view holds Flutter focus.
+That holds for one that has never been in front, and for one that is in front
+now. They are **silently dropped** by a terminal that was in front and then
+lost the foreground, which is the normal state of any terminal someone has
+used. `PostMessage` reports success either way. **This is not a focus-free
+path.** Relying on "never focused" would mean relying on nobody ever clicking
+the window.
 
-Either way, posting looks strictly safer than `SendInput` for the terminal:
-whatever happens, the characters cannot reach another app. Still open:
-whether posted characters garble when sent in a burst (the `CustomTextEdit`
-reset round trip applies to them too), and whether Enter works as
-`WM_CHAR 0x0D` or needs `WM_KEYDOWN VK_RETURN`. The bridge stays on checked
-`SendInput` until those are settled.
+What posting does offer is that it cannot misroute: whatever happens, the
+characters reach the terminal or nothing. Posting with focus taken and
+verified before every character would turn a focus change mid-line into
+dropped characters instead of characters in another app. The guard would still
+catch the change and report it. It is not adopted yet. Two things are untested:
+whether posted characters garble in a burst (the `CustomTextEdit` reset round
+trip applies to them too), and whether Enter works as `WM_CHAR 0x0D` or needs
+`WM_KEYDOWN VK_RETURN`. Until both are settled, the bridge stays on checked
+`SendInput`.
+
+One thing was not checked: whether the dropped characters are really gone or
+buffered somewhere. If `#rdb` appears when the window is next focused, it was
+buffered. By the source (`TextHook` returns when `active_model_` is null), it
+is gone.
 
 **The foreground lock, observed.** The probe ran from a process under the Claude
 desktop app. With the Claude app in front, `SetForegroundWindow(terminal)`
