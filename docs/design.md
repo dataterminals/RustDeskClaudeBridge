@@ -166,6 +166,19 @@ surfaces and defaults to `terminal`. With no terminal open, typing fails with
 `WindowNotFound` rather than falling back to the remote desktop, which has to be
 asked for by name. The policy gate and the focus check are unchanged.
 
+**Focus is checked before every key, not once.** On 2026-10-15 the focus check
+passed, and then 2254 characters went out over about 23 seconds with nothing
+looking. The tail landed in a Discord message box on another monitor, and the
+command reported `typed: 2254`. `require_focus` now means that the session
+window is the foreground window immediately before each character, key, click
+and scroll is sent. Input stops at the first one where it is not, with
+`FocusLost`: how many went, how many did not, and which window was in front
+instead. A `SetForegroundWindow` that reports success but leaves another window
+in front is a refusal, and nothing is sent. With `require_focus` off, results
+say `focus_verified: false` instead of implying a destination. Details, and why
+posted `WM_CHAR` messages are not used yet, are in `rustdesk-notes.md` under
+*Keystrokes and focus*.
+
 ## Open questions
 
 1. **A headless protocol client.** The terminal protobufs are all present and

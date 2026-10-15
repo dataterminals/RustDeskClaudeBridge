@@ -348,6 +348,8 @@ TOOLS = [
                        "default, where the keys land in a shell you opened. "
                        "kind='remote-desktop' sends them to whatever has focus "
                        "on the far desktop instead. Needs no display geometry. "
+                       "Stops with FocusLost if the session window leaves the "
+                       "foreground; the error says how many characters went. "
                        "Never use for passwords or any other credential.",
         "inputSchema": {
             "type": "object",

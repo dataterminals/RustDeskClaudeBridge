@@ -8,7 +8,8 @@ caller has to accept:
 * the local cursor visibly moves, and whatever the person at this keyboard was
   doing is interrupted
 * the session window must be focused; input goes wherever focus actually is, not
-  where it was supposed to go
+  where it was supposed to go -- and focus can move between one key and the
+  next, so every sender here takes a guard to run immediately before each event
 * there is no undo, no dry run, and no confirmation from the far side that the
   click landed on what you meant
 
@@ -24,6 +25,8 @@ directly.
 import ctypes
 import time
 from ctypes import wintypes
+
+from .errors import BridgeError
 
 _user32 = ctypes.windll.user32
 
@@ -90,7 +93,7 @@ def _send(*inputs):
     array = (_INPUT * len(inputs))(*inputs)
     sent = _user32.SendInput(len(inputs), array, ctypes.sizeof(_INPUT))
     if sent != len(inputs):
-        raise OSError("SendInput delivered %d of %d events" % (sent, len(inputs)))
+        raise BridgeError("SendInput delivered %d of %d events" % (sent, len(inputs)))
     return sent
 
 
@@ -128,44 +131,84 @@ def move(x, y):
     return cursor_position()
 
 
-def click(x, y, button="left", double=False, settle=0.08):
-    """Move, pause, then click. The pause lets the remote cursor catch up."""
+def _check(guard, sent):
+    """Run a caller's guard; it stops the input by raising."""
+    if guard is not None:
+        guard(sent)
+
+
+def click(x, y, button="left", double=False, settle=0.08, guard=None):
+    """Move, pause, then click. The pause lets the remote cursor catch up.
+
+    ``guard(sent)`` runs immediately before each click, after the pause.
+    """
     if button not in _BUTTONS:
         raise ValueError("Unknown mouse button %r" % button)
     down, up = _BUTTONS[button]
     move(x, y)
     time.sleep(settle)
+    _check(guard, 0)
     _send(_mouse(down), _mouse(up))
     if double:
         time.sleep(0.05)
+        _check(guard, 1)
         _send(_mouse(down), _mouse(up))
     return {"x": x, "y": y, "button": button, "double": double}
 
 
-def scroll(x, y, clicks):
+def scroll(x, y, clicks, guard=None):
     move(x, y)
     time.sleep(0.05)
+    _check(guard, 0)
     _send(_mouse(MOUSEEVENTF_WHEEL, data=int(clicks) * 120))
     return {"x": x, "y": y, "clicks": clicks}
 
 
-def type_text(text, delay=0.01):
-    """Type a string as Unicode input, so keyboard layout does not matter."""
-    for char in str(text):
-        code = ord(char)
-        down = _INPUT(type=INPUT_KEYBOARD,
-                      union=_INPUTUNION(ki=_KEYBDINPUT(0, code,
-                                                       KEYEVENTF_UNICODE, 0, None)))
-        up = _INPUT(type=INPUT_KEYBOARD,
-                    union=_INPUTUNION(ki=_KEYBDINPUT(
-                        0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, None)))
-        _send(down, up)
+def _key(vk=0, unit=0, flags=0):
+    return _INPUT(type=INPUT_KEYBOARD,
+                  union=_INPUTUNION(ki=_KEYBDINPUT(vk, unit, flags, 0, None)))
+
+
+def _char_events(char):
+    """Down and up for each UTF-16 unit, so a non-BMP character is a pair."""
+    data = char.encode("utf-16-le", "surrogatepass")
+    events = []
+    for offset in range(0, len(data), 2):
+        unit = int.from_bytes(data[offset:offset + 2], "little")
+        events.append(_key(unit=unit, flags=KEYEVENTF_UNICODE))
+        events.append(_key(unit=unit, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
+    return events
+
+
+def type_text(text, delay=0.01, guard=None):
+    """Type a string as Unicode input, so keyboard layout does not matter.
+
+    ``guard(sent)`` runs immediately before each character, with the count
+    already sent, and stops typing by raising. Keys land wherever the foreground
+    is at the moment each one is sent, so a check made once at the start covers
+    only the first character -- that is how the tail of a long line once went
+    into a chat box on another monitor.
+
+    One character per SendInput call, paced by ``delay``, not a batch: the
+    RustDesk terminal takes text through xterm's text-input connection, which
+    works out each insertion against a state the framework resets
+    asynchronously, so a burst would arrive garbled. docs/rustdesk-notes.md has
+    the source trail.
+    """
+    text = str(text)
+    for sent, char in enumerate(text):
+        _check(guard, sent)
+        try:
+            _send(*_char_events(char))
+        except BridgeError as exc:
+            raise BridgeError("%s, after %d of %d characters"
+                              % (exc, sent, len(text))) from exc
         if delay:
             time.sleep(delay)
-    return {"typed": len(str(text))}
+    return {"typed": len(text)}
 
 
-def press(key):
+def press(key, guard=None):
     """Press one named key (enter, tab, escape, f5, arrows...)."""
     name = str(key).strip().lower()
     if name not in NAMED_KEYS:
@@ -173,9 +216,6 @@ def press(key):
             "Unknown key %r. Known: %s" % (key, ", ".join(sorted(NAMED_KEYS)))
         )
     code = NAMED_KEYS[name]
-    down = _INPUT(type=INPUT_KEYBOARD,
-                  union=_INPUTUNION(ki=_KEYBDINPUT(code, 0, 0, 0, None)))
-    up = _INPUT(type=INPUT_KEYBOARD,
-                union=_INPUTUNION(ki=_KEYBDINPUT(code, 0, KEYEVENTF_KEYUP, 0, None)))
-    _send(down, up)
+    _check(guard, 0)
+    _send(_key(vk=code), _key(vk=code, flags=KEYEVENTF_KEYUP))
     return {"key": name}

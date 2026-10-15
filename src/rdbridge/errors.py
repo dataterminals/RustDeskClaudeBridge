@@ -53,3 +53,21 @@ class RustDeskTimeout(RustDeskError):
 
 class WindowNotFound(BridgeError):
     """No RustDesk session window matched, or it is not in a usable state."""
+
+
+class FocusLost(BridgeError):
+    """Input stopped because the session window was not the foreground window.
+
+    Keys go wherever the foreground is at the moment they are sent, so the
+    bridge checks before every one and stops at the first that would have gone
+    elsewhere. ``sent`` were each sent with the session window verified in the
+    foreground immediately before; the other ``total - sent`` were not sent.
+    ``foreground`` is the title of the window that was in front instead.
+    """
+
+    def __init__(self, message, *, sent, total, window, foreground):
+        super().__init__(message)
+        self.sent = sent
+        self.total = total
+        self.window = window
+        self.foreground = foreground

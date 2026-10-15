@@ -223,18 +223,33 @@ def main_window():
 
 
 def restore_and_focus(hwnd):
-    """Bring a window to the front, un-minimizing it first if needed.
+    """Ask for a window to come to the front, un-minimizing it first if needed.
 
-    Windows only lets the foreground process reassign focus, so this can fail
-    silently; the caller must re-read the window state rather than assume.
+    Returns what SetForegroundWindow returned, for diagnostics only. Windows
+    only lets the foreground process reassign focus, and even a granted request
+    holds only until something else takes the foreground back. So the caller
+    checks ``foreground_hwnd`` -- before every event it sends, not once.
     """
     SW_RESTORE = 9
     if _user32.IsIconic(hwnd):
         _user32.ShowWindow(hwnd, SW_RESTORE)
-    _user32.SetForegroundWindow(hwnd)
-    return _window_record(hwnd)
+    return bool(_user32.SetForegroundWindow(hwnd))
+
+
+def foreground_hwnd():
+    """The foreground window's handle, or 0 when there is none.
+
+    Builds no window record, so it is cheap enough to call before every key.
+    """
+    return int(_user32.GetForegroundWindow() or 0)
+
+
+def window_title(hwnd):
+    if not hwnd:
+        return ""
+    return _text(hwnd, _user32.GetWindowTextW, _user32.GetWindowTextLengthW)
 
 
 def foreground_window():
-    hwnd = _user32.GetForegroundWindow()
+    hwnd = foreground_hwnd()
     return _window_record(hwnd) if hwnd else None

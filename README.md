@@ -105,6 +105,12 @@ instead, where they land in whatever has focus on the far machine. With no
 terminal open, the default fails rather than falling back. Both are off until
 `input.enabled` and `input.allow_keys` are set in `config/bridge.local.json`.
 
+Keys go to whichever window is in front at the moment each one is sent, so with
+`input.require_focus` on (the default) the bridge checks the foreground before
+every key. If anything else takes it, typing stops there with `FocusLost` and
+exit code 1. The error says how many characters went to the session window,
+how many were not sent, and which window was in front instead.
+
 ## As an MCP server
 
 The package is not installed into site-packages, so `python -m rdbridge...`
@@ -146,9 +152,10 @@ input.
 python -m unittest discover -s tests
 ```
 
-All offline — no RustDesk, no peer, no network. 119 tests covering the policy
+All offline — no RustDesk, no peer, no network. 130 tests covering the policy
 boundary, the TOML editor's password-preservation guard, log parsing, coordinate
-mapping, session-window titles, where keystrokes go, and the shim's exit codes.
+mapping, session-window titles, where keystrokes go and when they stop, and the
+shim's exit codes.
 
 ## Port forwards expose to the LAN, not to localhost
 

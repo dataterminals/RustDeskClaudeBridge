@@ -15,6 +15,7 @@ gated separately in ``config/bridge.json``.
 """
 
 import os
+import time
 
 from . import config as config_module
 from . import forward as forward_module
@@ -25,7 +26,7 @@ from . import pointer
 from . import sessions as sessions_module
 from . import state
 from . import windows
-from .errors import BridgeError, PeerError, PolicyError
+from .errors import BridgeError, FocusLost, PeerError, PolicyError
 from .policy import Policy
 from .rustdesk import RustDesk
 
@@ -38,6 +39,45 @@ KEY_TARGET_KINDS = ("terminal", "remote-desktop")
 # The remote desktop has to be asked for. With no terminal open, the default
 # fails with WindowNotFound rather than falling back to the riskier target.
 DEFAULT_KEY_KIND = "terminal"
+
+# After asking for the foreground, how often and how long to look for it.
+FOCUS_POLLS = 25
+FOCUS_POLL_SECONDS = 0.01
+
+
+def _count(n, singular, plural):
+    return "%d %s" % (n, singular if n == 1 else plural)
+
+
+def _focus_guard(window, total, singular, plural):
+    """A check to run immediately before each event sent to ``window``.
+
+    It raises FocusLost the moment anything else is the foreground window, so
+    nothing more is sent. Everything counted as sent passed this same check
+    immediately before it went.
+    """
+    hwnd = window["hwnd"]
+
+    def guard(sent):
+        foreground = windows.foreground_hwnd()
+        if foreground == hwnd:
+            return
+        title = windows.window_title(foreground) if foreground else None
+        now = ("'%s' is in front now" % title) if title else \
+            "no window is in front now"
+        if sent:
+            done = ("%s went to the session window, each sent with it verified "
+                    "in front, and the other %d were not sent"
+                    % (_count(sent, singular, plural), total - sent))
+        else:
+            done = "nothing was sent"
+        raise FocusLost(
+            "Focus left '%s' after %d of %s; %s. Stopped: %s."
+            % (window["title"], sent, _count(total, singular, plural), now, done),
+            sent=sent, total=total, window=window["title"], foreground=title,
+        )
+
+    return guard
 
 
 class Bridge:
@@ -240,23 +280,38 @@ class Bridge:
         }
 
     def _require_focus(self, settings, window):
-        if settings.get("require_focus", True):
-            windows.restore_and_focus(window["hwnd"])
-            foreground = windows.foreground_window()
-            if not foreground or foreground["hwnd"] != window["hwnd"]:
-                raise BridgeError(
-                    "Could not bring '%s' to the foreground -- Windows only lets "
-                    "the active process reassign focus. Input was not sent, "
-                    "because it would have gone to whatever is focused instead."
-                    % window["title"]
-                )
+        """Bring the session window to the front and confirm it got there.
+
+        Returns True when focus was verified -- the caller must then re-check it
+        before every event with ``_focus_guard`` -- and False when
+        ``require_focus`` is off. Arriving in front once proves nothing about a
+        moment later: on 2026-10-15 a one-time check passed, and the tail of a
+        2254-character line went into a chat box on another monitor.
+        """
+        if not settings.get("require_focus", True):
+            return False
+        hwnd = window["hwnd"]
+        granted = windows.restore_and_focus(hwnd)
+        for _ in range(FOCUS_POLLS):
+            if windows.foreground_hwnd() == hwnd:
+                return True
+            time.sleep(FOCUS_POLL_SECONDS)
+        foreground = windows.foreground_hwnd()
+        title = windows.window_title(foreground) if foreground else None
+        raise BridgeError(
+            "Could not bring '%s' to the foreground: SetForegroundWindow %s, and "
+            "%s. Windows only lets the active process reassign focus. Nothing "
+            "was sent, because it would have gone to that window instead."
+            % (window["title"], "reported success" if granted else "was refused",
+               ("'%s' is in front" % title) if title else "no window is in front")
+        )
 
     def _prepare_input(self, peer, kind, display, x, y):
         settings = self.policy.check_input()
         resolved, window, display_record, mapping, _ = self._mapping(peer, kind, display)
         target = geometry.remote_to_screen(window, mapping, x, y)
-        self._require_focus(settings, window)
-        return resolved, window, mapping, target
+        verified = self._require_focus(settings, window)
+        return resolved, window, mapping, target, verified
 
     def _prepare_keys(self, peer, kind):
         """Find and focus the window for keystrokes. No pixel mapping is involved.
@@ -273,40 +328,55 @@ class Bridge:
                 % (" or ".join(KEY_TARGET_KINDS), kind)
             )
         resolved, window = self._session_window(peer, kind)
-        self._require_focus(settings, window)
-        return resolved, window
+        verified = self._require_focus(settings, window)
+        return resolved, window, verified
+
+    @staticmethod
+    def _delivered(result, window, verified, **extra):
+        """Say where the input went, and whether that was checked."""
+        result.update(extra)
+        result["window"] = window["title"]
+        result["focus_verified"] = verified
+        if not verified:
+            result["note"] = ("input.require_focus is off: this went to whatever "
+                              "was in the foreground, which was not checked.")
+        return result
 
     def remote_click(self, x, y, button="left", double=False, peer=None,
                      kind="remote-desktop", display=None):
-        _, window, mapping, target = self._prepare_input(peer, kind, display, x, y)
-        result = pointer.click(target[0], target[1], button=button, double=double)
-        result.update({
-            "remote": [x, y],
-            "screen": list(target),
-            "mapping": mapping.source,
-            "exact": mapping.exact,
-        })
-        return result
+        _, window, mapping, target, verified = self._prepare_input(
+            peer, kind, display, x, y)
+        guard = (_focus_guard(window, 2 if double else 1, "click", "clicks")
+                 if verified else None)
+        result = pointer.click(target[0], target[1], button=button, double=double,
+                               guard=guard)
+        return self._delivered(result, window, verified, remote=[x, y],
+                               screen=list(target), mapping=mapping.source,
+                               exact=mapping.exact)
 
     def remote_scroll(self, x, y, clicks, peer=None, kind="remote-desktop",
                       display=None):
-        _, _, mapping, target = self._prepare_input(peer, kind, display, x, y)
-        result = pointer.scroll(target[0], target[1], clicks)
-        result.update({"remote": [x, y], "screen": list(target),
-                       "mapping": mapping.source})
-        return result
+        _, window, mapping, target, verified = self._prepare_input(
+            peer, kind, display, x, y)
+        guard = (_focus_guard(window, 1, "scroll", "scrolls")
+                 if verified else None)
+        result = pointer.scroll(target[0], target[1], clicks, guard=guard)
+        return self._delivered(result, window, verified, remote=[x, y],
+                               screen=list(target), mapping=mapping.source)
 
     def remote_type(self, text, peer=None, kind=DEFAULT_KEY_KIND):
-        _, window = self._prepare_keys(peer, kind)
-        result = pointer.type_text(text)
-        result.update({"kind": kind, "window": window["title"]})
-        return result
+        text = str(text)
+        _, window, verified = self._prepare_keys(peer, kind)
+        guard = (_focus_guard(window, len(text), "character", "characters")
+                 if verified else None)
+        result = pointer.type_text(text, guard=guard)
+        return self._delivered(result, window, verified, kind=kind)
 
     def remote_press(self, key, peer=None, kind=DEFAULT_KEY_KIND):
-        _, window = self._prepare_keys(peer, kind)
-        result = pointer.press(key)
-        result.update({"kind": kind, "window": window["title"]})
-        return result
+        _, window, verified = self._prepare_keys(peer, kind)
+        guard = _focus_guard(window, 1, "key", "keys") if verified else None
+        result = pointer.press(key, guard=guard)
+        return self._delivered(result, window, verified, kind=kind)
 
     # -- diagnostics ------------------------------------------------------
     def doctor(self):

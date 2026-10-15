@@ -46,6 +46,13 @@ Prefer the lowest layer that does the job:
 
 ## Traps that have already bitten
 
+- **A focus check made once covers one keystroke.** `SendInput` goes to whatever
+  is in front when each key is sent. On 2026-10-15 the check passed, focus
+  moved during a 23-second line, and the tail landed in a Discord message box
+  while the command reported every character typed. `_focus_guard` runs before
+  every key, click and scroll. Do not hoist it out of the loop, batch keys
+  past it, or trust `SetForegroundWindow`'s return value instead of
+  `GetForegroundWindow()`.
 - **A minimized window reports a rect at `-32000,-32000`**, not an error. Every
   coordinate derived from it is nonsense. `geometry.assert_usable` catches it;
   do not bypass it.

@@ -160,7 +160,8 @@ version: "1.4.5", features: Features { privacy_mode: true, terminal: true }
 There is **no headless interface** to it in the shipped binary — it is a Flutter
 tab. It is the default target for the bridge's `rdb type` and `rustdesk_type`.
 Sending keys to it needs no display geometry, since keys go to the focused
-window, not to a coordinate.
+window, not to a coordinate. That focus is checked before every key; see
+*Keystrokes and focus*.
 
 A small AGPL client against `hbb_common` speaking those messages would give a
 true headless shell over RustDesk. That is the endgame, and it is a real
@@ -219,6 +220,101 @@ More about terminal windows, from the 1.4.5 source:
 
 **A minimized window reports `GetWindowRect` as `-32000,-32000` with a 160×28
 size** — not an error. Any geometry derived from it is nonsense.
+
+Every RustDesk window, main or session, has one child of class `FLUTTERVIEW`,
+and all of them run on one UI thread: the thread ID is the same for the main
+window, a remote desktop and a terminal. Observed on 2026-10-15.
+
+## Keystrokes and focus
+
+**`SendInput` goes to whatever is in the foreground when each key is sent.** It
+has no notion of a target window. On 2026-10-15 the bridge typed a
+2254-character line, a base64 `-EncodedCommand`, into a terminal on SylDesk. It
+checked focus once, then sent the characters one `SendInput` call each, about
+10 ms apart: some 23 seconds of typing. The command reported `typed: 2254` and
+exited 0. The last ~495 characters were found in a Discord message box on
+another monitor. Where the first ~1750 went is unknown. Nothing was sent to
+Discord.
+
+The old check had passed, so the terminal *was* in front when typing began. It
+was the half-minute after that nobody looked at. So now:
+
+- After asking for the foreground, the bridge polls `GetForegroundWindow()` for
+  up to 250 ms and refuses unless the session window is there, whatever
+  `SetForegroundWindow` returned. Nothing is sent on a refusal.
+- **`GetForegroundWindow()` is checked immediately before every character,
+  key, click and scroll.** The first time anything else is in front, input
+  stops with `FocusLost` (exit 1). The error says how many went, each verified
+  immediately before it was sent; how many were not sent; and the title of the
+  window that was in front instead.
+
+The check is per key rather than per 32-character chunk. The keys cannot be
+batched (below), so each one is its own `SendInput` call anyway. A check costs
+one user32 call, and checking once per chunk would only stretch the unchecked
+window from one key to 32. What is left is the moment between a check and the
+`SendInput` right after it. A focus change landing exactly there sends one key
+to the wrong window, and the next check stops the rest.
+
+**The foreground lock.** Windows lets a process take the foreground only in
+narrow cases, such as being the foreground process or having received the last
+input event. A background process like the bridge is usually refused while
+someone is using the machine; the target's taskbar button flashes instead. The
+bridge then refuses too. The usual workaround is to inject an Alt press first
+so that Windows counts the caller as having had the last input. It is not used
+here, because that Alt press goes to whatever window is in front. That is the
+same stray keystroke the check exists to prevent.
+
+**The terminal cannot take a burst.** RustDesk 1.4.5 builds with Flutter
+3.24.5 (`FLUTTER_VERSION` in `.github/workflows/flutter-build.yml`) and
+`xterm: 4.0.0`. `terminal_page.dart` builds a `TerminalView` with the default
+`hardwareKeyboardOnly: false`, so typed text arrives through xterm's
+`CustomTextEdit`, a `TextInputClient`. For each update it takes the editing
+text minus a placeholder as the insertion, then resets the engine side with
+`setEditingState`. That reset is a round trip. Characters that reach the
+engine's text model before the reset lands come back in the next update along
+with the earlier ones, which get inserted a second time. Nothing in the engine
+paces Unicode input either: `KeyboardManager` turns down `VK_PACKET` key-downs
+(`if (wparam == VK_PACKET) return false;`), so each `WM_CHAR` goes straight to
+the text path. So characters go one per call, paced. This comes from reading
+the source, not from a live test.
+
+**`PostMessage(WM_CHAR)` to the window: read from source, not yet tested
+live.** A posted message reaches only the window it was posted to, which is why
+it is attractive. If it worked without focus, it would be focus-free. If it
+needed focus, a focus change would drop characters instead of sending them to
+another app. The source says:
+
+- A `WM_CHAR` posted to the `FLUTTERVIEW` child with no key-down before it is
+  dispatched by `KeyboardManager` as text. It goes to `OnText` and on to
+  `TextInputPlugin::TextHook`, which returns at once when
+  `active_model_ == nullptr`, meaning no text field is connected.
+- No text field is connected while the window is unfocused. On desktop,
+  Flutter 3.24.5's `FocusManager` follows the app lifecycle
+  (`_respondToWindowFocus`) and moves focus to the root scope whenever the app
+  is not `resumed`. xterm's `CustomTextEdit` closes its input connection when
+  it loses focus. Posted key-downs fare no better, because the terminal's key
+  handler hangs off the same focus node.
+
+So the prediction, assuming the session window's engine reports lifecycle the
+way a single-window app does:
+
+- **Posted to an unfocused terminal:** dropped silently. This is not a
+  focus-free path.
+- **Posted to a focused terminal:** typed. If focus moved partway, the rest
+  would be dropped and could not land anywhere else.
+
+The second case would make the 2026-10-15 failure structurally impossible, not
+just checked for. But a dropped character looks like nothing at all from this
+side, so the bridge stays on checked `SendInput` until a live test settles it.
+The test needs an open terminal session, and Sylvia told before it runs:
+
+1. Post `WM_CHAR` for `#rdb` (a comment, no Enter) to the terminal's
+   `FLUTTERVIEW` while another window has focus. Look at the remote line.
+2. The same with the terminal focused.
+3. If (2) types, check whether posted characters garble when sent in a burst,
+   and whether Enter works as `WM_CHAR 0x0D` or needs `WM_KEYDOWN VK_RETURN`.
+
+A truly focus-free path is the headless client under *Remote terminal*.
 
 ## The log is the state channel
 
